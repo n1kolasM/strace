@@ -258,6 +258,7 @@ MISC_TESTS = \
 	detach-stopped.test \
 	filter-unavailable.test \
 	fflush.test \
+	filtering_syscall-syntax.test \
 	get_regs.test \
 	interactive_block.test \
 	ksysent.test \
