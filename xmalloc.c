@@ -91,6 +91,9 @@ xreallocarray(void *ptr, size_t nmemb, size_t size)
 char *
 xstrdup(const char *str)
 {
+	if (!str)
+		return NULL;
+
 	char *p = strdup(str);
 
 	if (!p)

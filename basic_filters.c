@@ -48,7 +48,8 @@ number_setbit(const unsigned int i, number_slot_t *const vec)
 static bool
 number_isset(const unsigned int i, const number_slot_t *const vec)
 {
-	return vec[i / BITS_PER_SLOT] & ((number_slot_t) 1 << (i % BITS_PER_SLOT));
+	return !!((vec[i / BITS_PER_SLOT]
+		  & ((number_slot_t) 1 << (i % BITS_PER_SLOT))));
 }
 
 static void
@@ -62,7 +63,7 @@ reallocate_number_set(struct number_set *const set, const unsigned int new_nslot
 	set->nslots = new_nslots;
 }
 
-void
+static void
 add_number_to_set(const unsigned int number, struct number_set *const set)
 {
 	reallocate_number_set(set, number / BITS_PER_SLOT + 1);
@@ -72,12 +73,12 @@ add_number_to_set(const unsigned int number, struct number_set *const set)
 bool
 is_number_in_set(const unsigned int number, const struct number_set *const set)
 {
-	return ((number / BITS_PER_SLOT < set->nslots)
-		&& number_isset(number, set->vec)) ^ set->not;
+	return !!(((number / BITS_PER_SLOT < set->nslots)
+		&& number_isset(number, set->vec)) ^ set->not);
 }
 
 static bool
-qualify_syscall_number(const char *s, struct number_set *set)
+parse_syscall_number(const char *s, struct number_set *set)
 {
 	int n = string_to_uint(s);
 	if (n < 0)
@@ -108,7 +109,7 @@ regerror_msg_and_die(int errcode, const regex_t *preg,
 }
 
 static bool
-qualify_syscall_regex(const char *s, struct number_set *set)
+parse_syscall_regex(const char *s, struct number_set *set)
 {
 	regex_t preg;
 	int rc;
@@ -180,7 +181,7 @@ lookup_class(const char *s)
 }
 
 static bool
-qualify_syscall_class(const char *s, struct number_set *set)
+parse_syscall_class(const char *s, struct number_set *set)
 {
 	const unsigned int n = lookup_class(s);
 	if (!n)
@@ -203,7 +204,7 @@ qualify_syscall_class(const char *s, struct number_set *set)
 }
 
 static bool
-qualify_syscall_name(const char *s, struct number_set *set)
+parse_syscall_name(const char *s, struct number_set *set)
 {
 	unsigned int p;
 	bool found = false;
@@ -225,7 +226,7 @@ qualify_syscall_name(const char *s, struct number_set *set)
 }
 
 static bool
-qualify_syscall(const char *token, struct number_set *set)
+parse_syscall(const char *token, struct number_set *set)
 {
 	bool ignore_fail = false;
 
@@ -234,11 +235,11 @@ qualify_syscall(const char *token, struct number_set *set)
 		ignore_fail = true;
 	}
 	if (*token >= '0' && *token <= '9')
-		return qualify_syscall_number(token, set) || ignore_fail;
+		return parse_syscall_number(token, set) || ignore_fail;
 	if (*token == '/')
-		return qualify_syscall_regex(token + 1, set) || ignore_fail;
-	return qualify_syscall_class(token, set)
-	       || qualify_syscall_name(token, set)
+		return parse_syscall_regex(token + 1, set) || ignore_fail;
+	return parse_syscall_class(token, set)
+	       || parse_syscall_name(token, set)
 	       || ignore_fail;
 }
 
@@ -247,24 +248,15 @@ qualify_syscall(const char *token, struct number_set *set)
  * according to STR specification.
  */
 void
-qualify_syscall_tokens(const char *const str, struct number_set *const set,
-		       const char *const name)
+parse_syscall_set(const char *const str, struct number_set *const set)
 {
-	/* Clear all sets. */
 	unsigned int p;
-	for (p = 0; p < SUPPORTED_PERSONALITIES; ++p) {
-		if (set[p].nslots)
-			memset(set[p].vec, 0,
-			       sizeof(*set[p].vec) * set[p].nslots);
-		set[p].not = false;
-	}
+	const char *s = str;
 
 	/*
 	 * Each leading ! character means inversion
 	 * of the remaining specification.
 	 */
-	const char *s = str;
-handle_inversion:
 	while (*s == '!') {
 		for (p = 0; p < SUPPORTED_PERSONALITIES; ++p) {
 			set[p].not = !set[p].not;
@@ -280,16 +272,18 @@ handle_inversion:
 		 */
 		return;
 	} else if (strcmp(s, "all") == 0) {
-		s = "!none";
-		goto handle_inversion;
+		for (p = 0; p < SUPPORTED_PERSONALITIES; ++p) {
+			set[p].not = !set[p].not;
+		}
+		return;
 	}
 
 	/*
 	 * Split the string into comma separated tokens.
-	 * For each token, call qualify_syscall that will take care
+	 * For each token, call parse_syscall that will take care
 	 * if adding appropriate syscall numbers to sets.
 	 * The absence of tokens or a negative return code
-	 * from qualify_syscall is a fatal error.
+	 * from parse_syscall is a fatal error.
 	 */
 	char *copy = xstrdup(s);
 	char *saveptr = NULL;
@@ -298,37 +292,62 @@ handle_inversion:
 
 	for (token = strtok_r(copy, ",", &saveptr); token;
 	     token = strtok_r(NULL, ",", &saveptr)) {
-		done = qualify_syscall(token, set);
+		done = parse_syscall(token, set);
 		if (!done) {
-			error_msg_and_die("invalid %s '%s'", name, token);
+			error_msg_and_die("invalid system call '%s'", token);
 		}
 	}
 
 	free(copy);
 
 	if (!done) {
-		error_msg_and_die("invalid %s '%s'", name, str);
+		error_msg_and_die("invalid system call '%s'", str);
 	}
+}
+
+void *
+parse_syscall_filter(const char *str)
+{
+	struct number_set *set = xcalloc(SUPPORTED_PERSONALITIES,
+					 sizeof(struct number_set));
+
+	parse_syscall_set(str, set);
+	return set;
+}
+
+bool
+run_syscall_filter(struct tcb *tcp, void *_priv_data)
+{
+	struct number_set *set = _priv_data;
+
+	return is_number_in_set(tcp->scno, &set[current_personality]);
+}
+
+void
+free_syscall_filter(void *_priv_data)
+{
+	struct number_set *set = _priv_data;
+	unsigned int p;
+
+	for (p = 0; p < SUPPORTED_PERSONALITIES; ++p) {
+		free(set[p].vec);
+	}
+	free(set);
 }
 
 /*
  * Add numbers to SET according to STR specification.
  */
 void
-qualify_tokens(const char *const str, struct number_set *const set,
+parse_set(const char *const str, struct number_set *const set,
 	       string_to_uint_func func, const char *const name)
 {
-	/* Clear the set. */
-	if (set->nslots)
-		memset(set->vec, 0, sizeof(*set->vec) * set->nslots);
-	set->not = false;
+	const char *s = str;
 
 	/*
 	 * Each leading ! character means inversion
 	 * of the remaining specification.
 	 */
-	const char *s = str;
-handle_inversion:
 	while (*s == '!') {
 		set->not = !set->not;
 		++s;
@@ -341,8 +360,8 @@ handle_inversion:
 		 */
 		return;
 	} else if (strcmp(s, "all") == 0) {
-		s = "!none";
-		goto handle_inversion;
+		set->not = !set->not;
+		return;
 	}
 
 	/*
@@ -372,4 +391,64 @@ handle_inversion:
 	if (number < 0) {
 		error_msg_and_die("invalid %s '%s'", name, str);
 	}
+}
+
+void *
+parse_fd_filter(const char *str)
+{
+	struct number_set *set = xcalloc(1, sizeof(struct number_set));
+
+	parse_set(str, set, string_to_uint, "descriptor");
+	return set;
+}
+
+bool
+run_fd_filter(struct tcb *tcp, void *_priv_data)
+{
+	int fd = tcp->u_arg[0];
+	struct number_set *set = _priv_data;
+
+	if (fd < 0)
+		return false;
+	return is_number_in_set(fd, set);
+}
+
+void
+free_fd_filter(void *_priv_data)
+{
+	struct number_set *set = _priv_data;
+
+	free(set->vec);
+	free(set);
+	return;
+}
+
+void *
+parse_path_filter(const char *path, const char *const name)
+{
+	struct path_set *set = xcalloc(1, sizeof(struct path_set));
+
+	pathtrace_select_set(path, set);
+	return set;
+}
+
+bool
+run_path_filter(struct tcb *tcp, void *_priv_data)
+{
+	struct path_set *set = _priv_data;
+
+	return pathtrace_match_set(tcp, set);
+}
+
+void
+free_path_filter(void *_priv_data)
+{
+	struct path_set *set = _priv_data;
+	unsigned int i;
+
+	for (i = 0; i < set->num_selected; ++i)
+		free((char *) set->paths_selected[i]);
+	free(set->paths_selected);
+	free(set);
+	return;
 }

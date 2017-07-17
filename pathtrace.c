@@ -91,7 +91,7 @@ storepath(const char *path, struct path_set *set)
 	set->paths_selected = xreallocarray(set->paths_selected,
 					    set->num_selected,
 					    sizeof(set->paths_selected[0]));
-	set->paths_selected[i] = path;
+	set->paths_selected[i] = xstrdup(path);
 }
 
 /*

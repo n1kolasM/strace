@@ -770,7 +770,8 @@ droptcb(struct tcb *tcp)
 
 	int p;
 	for (p = 0; p < SUPPORTED_PERSONALITIES; ++p)
-		free(tcp->inject_vec[p]);
+		if (tcp->inject_vec[p])
+			free(tcp->inject_vec[p]);
 
 	free_tcb_priv_data(tcp);
 
@@ -1576,13 +1577,13 @@ init(int argc, char *argv[])
 	shared_log = stderr;
 	set_sortby(DEFAULT_SORTBY);
 	set_personality(DEFAULT_PERSONALITY);
-	qualify("trace=all");
-	qualify("abbrev=all");
-	qualify("verbose=all");
+	parse_qualify_filter("trace=all");
+	parse_qualify_filter("abbrev=all");
+	parse_qualify_filter("verbose=all");
 #if DEFAULT_QUAL_FLAGS != (QUAL_TRACE | QUAL_ABBREV | QUAL_VERBOSE)
 # error Bug in DEFAULT_QUAL_FLAGS
 #endif
-	qualify("signal=all");
+	parse_qualify_filter("signal=all");
 	while ((c = getopt(argc, argv,
 		"+b:cCdfFhiqrtTvVwxyz"
 #ifdef USE_LIBUNWIND
@@ -1649,7 +1650,7 @@ init(int argc, char *argv[])
 			show_fd_path++;
 			break;
 		case 'v':
-			qualify("abbrev=none");
+			parse_qualify_filter("abbrev=none");
 			break;
 		case 'V':
 			print_version();
@@ -1664,7 +1665,7 @@ init(int argc, char *argv[])
 				error_opt_arg(c, optarg);
 			break;
 		case 'e':
-			qualify(optarg);
+			parse_qualify_filter(optarg);
 			break;
 		case 'o':
 			outfname = optarg;
@@ -1712,6 +1713,7 @@ init(int argc, char *argv[])
 			break;
 		}
 	}
+	filtering_parsing_finish();
 
 	argv += optind;
 	argc -= optind;
@@ -2414,6 +2416,8 @@ trace_syscall(struct tcb *tcp, unsigned int *sig)
 		case 0:
 			return 0;
 		case 1:
+			if (!tcp->qual_flg)
+				filter_syscall(tcp);
 			res = syscall_entering_trace(tcp, sig);
 		}
 		syscall_entering_finish(tcp, res);
