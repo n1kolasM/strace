@@ -142,7 +142,7 @@ parse_syscall_regex(const char *s, struct number_set *set)
 }
 
 static unsigned int
-lookup_class(const char *s)
+lookup_class(const char *s, bool qualify_mode)
 {
 	static const struct {
 		const char *name;
@@ -173,6 +173,8 @@ lookup_class(const char *s)
 
 	unsigned int i;
 	for (i = 0; i < ARRAY_SIZE(syscall_class); ++i) {
+		if (!qualify_mode && *s != '%')
+			continue;
 		if (strcmp(s, syscall_class[i].name) == 0) {
 			return syscall_class[i].value;
 		}
@@ -182,9 +184,9 @@ lookup_class(const char *s)
 }
 
 static bool
-parse_syscall_class(const char *s, struct number_set *set)
+parse_syscall_class(const char *s, struct number_set *set, bool qualify_mode)
 {
-	const unsigned int n = lookup_class(s);
+	const unsigned int n = lookup_class(s, qualify_mode);
 	if (!n)
 		return false;
 
@@ -227,7 +229,7 @@ parse_syscall_name(const char *s, struct number_set *set)
 }
 
 static bool
-parse_syscall(const char *token, struct number_set *set)
+parse_syscall(const char *token, struct number_set *set, bool qualify_mode)
 {
 	bool ignore_fail = false;
 
@@ -239,7 +241,7 @@ parse_syscall(const char *token, struct number_set *set)
 		return parse_syscall_number(token, set) || ignore_fail;
 	if (*token == '/')
 		return parse_syscall_regex(token + 1, set) || ignore_fail;
-	return parse_syscall_class(token, set)
+	return parse_syscall_class(token, set, qualify_mode)
 	       || parse_syscall_name(token, set)
 	       || ignore_fail;
 }
@@ -249,20 +251,23 @@ parse_syscall(const char *token, struct number_set *set)
  * according to STR specification.
  */
 void
-parse_syscall_set(const char *const str, struct number_set *const set)
+parse_syscall_set(const char *const str, struct number_set *const set,
+		  bool qualify_mode)
 {
 	unsigned int p;
 	const char *s = str;
 
-	/*
-	 * Each leading ! character means inversion
-	 * of the remaining specification.
-	 */
-	while (*s == '!') {
-		for (p = 0; p < SUPPORTED_PERSONALITIES; ++p) {
-			set[p].not = !set[p].not;
+	if (qualify_mode) {
+		/*
+		 * Each leading ! character means inversion
+		 * of the remaining specification.
+		 */
+		while (*s == '!') {
+			for (p = 0; p < SUPPORTED_PERSONALITIES; ++p) {
+				set[p].not = !set[p].not;
+			}
+			++s;
 		}
-		++s;
 	}
 
 	if (strcmp(s, "none") == 0) {
@@ -293,7 +298,7 @@ parse_syscall_set(const char *const str, struct number_set *const set)
 
 	for (token = strtok_r(copy, ",", &saveptr); token;
 	     token = strtok_r(NULL, ",", &saveptr)) {
-		done = parse_syscall(token, set);
+		done = parse_syscall(token, set, qualify_mode);
 		if (!done) {
 			error_msg_and_die("invalid system call '%s'", token);
 		}
@@ -307,12 +312,12 @@ parse_syscall_set(const char *const str, struct number_set *const set)
 }
 
 void *
-parse_syscall_filter(const char *str)
+parse_syscall_filter(const char *str, bool qualify_mode)
 {
 	struct number_set *set = xcalloc(SUPPORTED_PERSONALITIES,
 					 sizeof(struct number_set));
 
-	parse_syscall_set(str, set);
+	parse_syscall_set(str, set, qualify_mode);
 	return set;
 }
 
@@ -341,17 +346,20 @@ free_syscall_filter(void *_priv_data)
  */
 void
 parse_set(const char *const str, struct number_set *const set,
-	       string_to_uint_func func, const char *const name)
+	       string_to_uint_func func, const char *const name,
+	       bool qualify_mode)
 {
 	const char *s = str;
 
-	/*
-	 * Each leading ! character means inversion
-	 * of the remaining specification.
-	 */
-	while (*s == '!') {
-		set->not = !set->not;
-		++s;
+	if (qualify_mode) {
+		/*
+		 * Each leading ! character means inversion
+		 * of the remaining specification.
+		 */
+		while (*s == '!') {
+			set->not = !set->not;
+			++s;
+		}
 	}
 
 	if (strcmp(s, "none") == 0) {
@@ -395,11 +403,11 @@ parse_set(const char *const str, struct number_set *const set,
 }
 
 void *
-parse_fd_filter(const char *str)
+parse_fd_filter(const char *str, bool qualify_mode)
 {
 	struct number_set *set = xcalloc(1, sizeof(struct number_set));
 
-	parse_set(str, set, string_to_uint, "descriptor");
+	parse_set(str, set, string_to_uint, "descriptor", qualify_mode);
 	return set;
 }
 
@@ -441,7 +449,7 @@ free_fd_filter(void *_priv_data)
 }
 
 void *
-parse_path_filter(const char *path, const char *const name)
+parse_path_filter(const char *path, const char *const name, bool qualify_mode)
 {
 	struct path_set *set = xcalloc(1, sizeof(struct path_set));
 
