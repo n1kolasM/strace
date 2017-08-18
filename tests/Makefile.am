@@ -258,6 +258,9 @@ MISC_TESTS = \
 	detach-stopped.test \
 	filter-unavailable.test \
 	fflush.test \
+	filtering_action-syntax.test \
+	filtering_expression-empty.test \
+	filtering_expression-syntax.test \
 	filtering_syscall-syntax.test \
 	get_regs.test \
 	interactive_block.test \
