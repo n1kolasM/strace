@@ -1,6 +1,9 @@
 Noteworthy changes in release ?.?? (????-??-??)
 ===============================================
 
+* Changes in command line syntax
+  * New syntax for -e option for filter-based expressions.
+    Old syntax is still supported.
 * Improvements
   * Enhanced decoding of optlen argument of getsockopt syscall.
   * Enhanced decoding of SO_LINGER option of getsockopt and setsockopt syscalls.
